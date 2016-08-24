@@ -22,8 +22,10 @@ import java.util.List;
 import java.util.Map;
 
 import org.voltcore.logging.Level;
+import org.voltcore.logging.VoltLogger;
 import org.voltcore.messaging.Mailbox;
 import org.voltcore.utils.CoreUtils;
+import org.voltdb.DependencyPair;
 import org.voltdb.ParameterSet;
 import org.voltdb.ProcedureRunner;
 import org.voltdb.SiteProcedureConnection;
@@ -34,6 +36,8 @@ import org.voltdb.client.BatchTimeoutOverrideType;
 import org.voltdb.exceptions.EEException;
 import org.voltdb.exceptions.InterruptException;
 import org.voltdb.exceptions.SQLException;
+import org.voltdb.jni.ExecutionEngine;
+import org.voltdb.messaging.FastDeserializer;
 import org.voltdb.messaging.FragmentResponseMessage;
 import org.voltdb.messaging.FragmentTaskMessage;
 import org.voltdb.planner.ActivePlanRepository;
@@ -44,6 +48,9 @@ import org.voltdb.utils.VoltTableUtil;
 
 public class FragmentTask extends TransactionTask
 {
+    /** java.util.logging logger. */
+    private static final VoltLogger LOG = new VoltLogger("HOST");
+
     final Mailbox m_initiator;
     final FragmentTaskMessage m_fragmentMsg;
     final Map<Integer, List<VoltTable>> m_inputDeps;
@@ -163,7 +170,7 @@ public class FragmentTask extends TransactionTask
         depTable.setStatusCode(VoltTableUtil.NULL_DEPENDENCY_STATUS);
         for (int frag = 0; frag < m_fragmentMsg.getFragmentCount(); frag++) {
             final int outputDepId = m_fragmentMsg.getOutputDepId(frag);
-            response.addDependency(outputDepId, depTable);
+            response.addDependency(new DependencyPair.TableDependencyPair(outputDepId, depTable));
         }
 
         deliverResponse(response);
@@ -225,8 +232,7 @@ public class FragmentTask extends TransactionTask
 
         if (m_fragmentMsg.isEmptyForRestart()) {
             int outputDepId = m_fragmentMsg.getOutputDepId(0);
-            currentFragResponse.addDependency(outputDepId,
-                    new VoltTable(new ColumnInfo[] {new ColumnInfo("UNUSED", VoltType.INTEGER)}, 1));
+            currentFragResponse.addDependency(new DependencyPair.TableDependencyPair(outputDepId, m_dummyResult));
             return currentFragResponse;
         }
 
@@ -253,7 +259,7 @@ public class FragmentTask extends TransactionTask
              * The entire procedure will roll back successfully on failure
              */
             try {
-                VoltTable dependency;
+                FastDeserializer fragResult;
                 fragmentPlan = m_fragmentMsg.getFragmentPlan(frag);
                 String stmtText = null;
 
@@ -274,7 +280,7 @@ public class FragmentTask extends TransactionTask
                 // set up the batch context for the fragment set
                 siteConnection.setBatch(m_fragmentMsg.getCurrentBatchIndex());
 
-                dependency = siteConnection.executePlanFragments(
+                fragResult = siteConnection.executePlanFragments(
                         1,
                         new long[] { fragmentId },
                         new long [] { inputDepId },
@@ -283,21 +289,40 @@ public class FragmentTask extends TransactionTask
                         m_txnState.txnId,
                         m_txnState.m_spHandle,
                         m_txnState.uniqueId,
-                        m_txnState.isReadOnly())[0];
+                        m_txnState.isReadOnly());
+
+                // get a copy of the result buffers from the cache buffer so we can post the
+                // fragment response to the network
+                final int tableSize;
+                final byte fullBacking[];
+                try {
+                    // read the complete size of the buffer used
+                    fragResult.readInt();
+                    // read number of dependencies (1)
+                    fragResult.readInt();
+                    // read the dependencyId() -1;
+                    fragResult.readInt();
+                    tableSize = fragResult.readInt();
+                    fullBacking = new byte[tableSize];
+                    // get a copy of the buffer
+                    fragResult.readFully(fullBacking);
+                } catch (final IOException ex) {
+                    LOG.error("Failed to deserialze result table" + ex);
+                    throw new EEException(ExecutionEngine.ERRORCODE_WRONG_SERIALIZED_BYTES);
+                }
 
                 if (hostLog.isTraceEnabled()) {
                     hostLog.l7dlog(Level.TRACE,
                        LogKeys.org_voltdb_ExecutionSite_SendingDependency.name(),
                        new Object[] { outputDepId }, null);
                 }
-                currentFragResponse.addDependency(outputDepId, dependency);
+                currentFragResponse.addDependency(new DependencyPair.BufferDependencyPair(outputDepId, fullBacking, 0, tableSize));
             } catch (final EEException e) {
                 hostLog.l7dlog( Level.TRACE, LogKeys.host_ExecutionSite_ExceptionExecutingPF.name(), new Object[] { Encoder.hexEncode(planHash) }, e);
                 currentFragResponse.setStatus(FragmentResponseMessage.UNEXPECTED_ERROR, e);
                 if (currentFragResponse.getTableCount() == 0) {
                     // Make sure the response has at least 1 result with a valid DependencyId
-                    currentFragResponse.addDependency(outputDepId,
-                            new VoltTable(new ColumnInfo[] {new ColumnInfo("UNUSED", VoltType.INTEGER)}, 1));
+                    currentFragResponse.addDependency(new DependencyPair.TableDependencyPair(outputDepId, m_dummyResult));
                 }
                 break;
             } catch (final SQLException e) {
@@ -305,8 +330,7 @@ public class FragmentTask extends TransactionTask
                 currentFragResponse.setStatus(FragmentResponseMessage.UNEXPECTED_ERROR, e);
                 if (currentFragResponse.getTableCount() == 0) {
                     // Make sure the response has at least 1 result with a valid DependencyId
-                    currentFragResponse.addDependency(outputDepId,
-                            new VoltTable(new ColumnInfo[] {new ColumnInfo("UNUSED", VoltType.INTEGER)}, 1));
+                    currentFragResponse.addDependency(new DependencyPair.TableDependencyPair(outputDepId, m_dummyResult));
                 }
                 break;
             }
@@ -315,8 +339,7 @@ public class FragmentTask extends TransactionTask
                 currentFragResponse.setStatus(FragmentResponseMessage.UNEXPECTED_ERROR, e);
                 if (currentFragResponse.getTableCount() == 0) {
                     // Make sure the response has at least 1 result with a valid DependencyId
-                    currentFragResponse.addDependency(outputDepId,
-                            new VoltTable(new ColumnInfo[] {new ColumnInfo("UNUSED", VoltType.INTEGER)}, 1));
+                    currentFragResponse.addDependency(new DependencyPair.TableDependencyPair(outputDepId, m_dummyResult));
                 }
                 break;
             }

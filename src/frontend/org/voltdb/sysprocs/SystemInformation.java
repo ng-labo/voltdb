@@ -121,12 +121,12 @@ public class SystemInformation extends VoltSystemProcedure
                                        new ColumnInfo("KEY", VoltType.STRING),
                                        new ColumnInfo("VALUE", VoltType.STRING));
             }
-            return new DependencyPair(DEP_DISTRIBUTE, result);
+            return new DependencyPair.TableDependencyPair(DEP_DISTRIBUTE, result);
         }
         else if (fragmentId == SysProcFragmentId.PF_systemInformationOverviewAggregate)
         {
             VoltTable result = VoltTableUtil.unionTables(dependencies.get(DEP_DISTRIBUTE));
-            return new DependencyPair(DEP_AGGREGATE, result);
+            return new DependencyPair.TableDependencyPair(DEP_AGGREGATE, result);
         }
         else if (fragmentId == SysProcFragmentId.PF_systemInformationDeployment)
         {
@@ -142,7 +142,7 @@ public class SystemInformation extends VoltSystemProcedure
             {
                 result = new VoltTable(clusterInfoSchema);
             }
-            return new DependencyPair(DEP_systemInformationDeployment, result);
+            return new DependencyPair.TableDependencyPair(DEP_systemInformationDeployment, result);
         }
         else if (fragmentId == SysProcFragmentId.PF_systemInformationAggregate)
         {
@@ -181,7 +181,7 @@ public class SystemInformation extends VoltSystemProcedure
                     }
                 }
             }
-            return new DependencyPair(DEP_systemInformationAggregate, result);
+            return new DependencyPair.TableDependencyPair(DEP_systemInformationAggregate, result);
         }
         assert(false);
         return null;

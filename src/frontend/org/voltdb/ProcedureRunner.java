@@ -57,6 +57,8 @@ import org.voltdb.exceptions.SpecifiedException;
 import org.voltdb.groovy.GroovyScriptProcedureDelegate;
 import org.voltdb.iv2.MpInitiator;
 import org.voltdb.iv2.UniqueIdGenerator;
+import org.voltdb.jni.ExecutionEngine;
+import org.voltdb.messaging.FastDeserializer;
 import org.voltdb.messaging.FragmentTaskMessage;
 import org.voltdb.planner.ActivePlanRepository;
 import org.voltdb.sysprocs.AdHocBase;
@@ -787,7 +789,7 @@ public class ProcedureRunner {
             }
         }
         else if (m_isSinglePartition) {
-            results = fastPath(batch);
+            results = fastPath(batch, isFinalSQL);
         }
         else {
             results = slowPath(batch, isFinalSQL);
@@ -1300,16 +1302,20 @@ public class ProcedureRunner {
        if (result instanceof VoltTable[]) {
            VoltTable[] retval = (VoltTable[]) result;
            for (VoltTable table : retval) {
-            if (table == null) {
+               if (table == null) {
                    Exception e = new RuntimeException("VoltTable arrays with non-zero length cannot contain null values.");
                    throw new InvocationTargetException(e);
                }
-        }
-
+               // Make sure this table does not use an ee cache buffer
+               table.convertToHeapBuffer();
+           }
            return retval;
        }
        if (result instanceof VoltTable) {
-           return new VoltTable[] { (VoltTable) result };
+           VoltTable vt = (VoltTable) result;
+           // Make sure this table does not use an ee cache buffer
+           vt.convertToHeapBuffer();
+           return new VoltTable[] { vt };
        }
        if (result instanceof Long) {
            VoltTable t = new VoltTable(new VoltTable.ColumnInfo("", VoltType.BIGINT));
@@ -1587,7 +1593,7 @@ public class ProcedureRunner {
    }
 
    // Batch up pre-planned fragments, but handle ad hoc independently.
-   private VoltTable[] fastPath(List<QueuedSQL> batch) {
+   private VoltTable[] fastPath(List<QueuedSQL> batch, final boolean finalTask) {
        final int batchSize = batch.size();
        Object[] params = new Object[batchSize];
        long[] fragmentIds = new long[batchSize];
@@ -1610,7 +1616,7 @@ public class ProcedureRunner {
 
        VoltTable[] results = null;
        try {
-           results = m_site.executePlanFragments(
+           FastDeserializer fragResult = m_site.executePlanFragments(
                    batchSize,
                    fragmentIds,
                    null,
@@ -1620,6 +1626,23 @@ public class ProcedureRunner {
                    m_txnState.m_spHandle,
                    m_txnState.uniqueId,
                    m_isReadOnly);
+           final int totalSize;
+           try {
+               // read the complete size of the buffer used
+               totalSize = fragResult.readInt();
+           } catch (final IOException ex) {
+               log.error("Failed to deserialze result table" + ex);
+               throw new EEException(ExecutionEngine.ERRORCODE_WRONG_SERIALIZED_BYTES);
+           }
+           final ByteBuffer rawDataBuff;
+           if ((m_batchIndex == 0 && !m_site.usingFallbackBuffer()) || finalTask) {
+               // If this is the first or final batch, skip the copy of the underlying byte array
+               rawDataBuff = fragResult.buffer();
+           }
+           else {
+               rawDataBuff = fragResult.readBuffer(totalSize);
+           }
+           results = TableHelper.convertBackedBufferToTables(rawDataBuff, batchSize);
        } catch (Throwable ex) {
            if (! m_isReadOnly) {
                // roll back the current batch and re-throw the EE exception

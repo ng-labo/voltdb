@@ -492,15 +492,18 @@ int deserializeParameterSet(const char* serialized_parameterset, jint serialized
  * @param pointer the VoltDBEngine pointer
  * @param parameter_buffer direct byte buffer to be set
  * @param m_parameterBuffersize size of the buffer
- * @param result_buffer direct byte buffer to be set
- * @param result_buffer_size size of the buffer
+ * @param first_result_buffer direct byte buffer to be set
+ * @param first_result_buffer_size size of the buffer
+ * @param final_result_buffer direct byte buffer to be set
+ * @param final_result_buffer_size size of the buffer
  * @param exception_buffer direct byte buffer to be set
  * @param exception_buffer_size size of the buffer
  * @return error code
 */
 SHAREDLIB_JNIEXPORT jint JNICALL Java_org_voltdb_jni_ExecutionEngine_nativeSetBuffers
   (JNIEnv *env, jobject obj, jlong engine_ptr, jobject parameter_buffer, jint parameter_buffer_size,
-   jobject result_buffer, jint result_buffer_size,
+   jobject first_result_buffer, jint first_result_buffer_size,
+   jobject final_result_buffer, jint final_result_buffer_size,
    jobject exception_buffer, jint exception_buffer_size)
 {
     VOLT_DEBUG("nativeSetBuffers() start");
@@ -516,17 +519,22 @@ SHAREDLIB_JNIEXPORT jint JNICALL Java_org_voltdb_jni_ExecutionEngine_nativeSetBu
                 env->GetDirectBufferAddress(parameter_buffer));
         int parameterBufferCapacity = parameter_buffer_size;
 
-        char *reusedResultBuffer = reinterpret_cast<char*>(
-                env->GetDirectBufferAddress(result_buffer));
-        int reusedResultBufferCapacity = result_buffer_size;
+        char *firstReusedResultBuffer = reinterpret_cast<char*>(
+                env->GetDirectBufferAddress(first_result_buffer));
+        int firstReusedResultBufferCapacity = first_result_buffer_size;
+
+        char *finalReusedResultBuffer = reinterpret_cast<char*>(
+                env->GetDirectBufferAddress(final_result_buffer));
+        int finalReusedResultBufferCapacity = final_result_buffer_size;
 
         char *exceptionBuffer = reinterpret_cast<char*>(
                  env->GetDirectBufferAddress(exception_buffer));
         int exceptionBufferCapacity = exception_buffer_size;
 
         engine->setBuffers(parameterBuffer, parameterBufferCapacity,
-            reusedResultBuffer, reusedResultBufferCapacity,
-            exceptionBuffer, exceptionBufferCapacity);
+                firstReusedResultBuffer, firstReusedResultBufferCapacity,
+                finalReusedResultBuffer, finalReusedResultBufferCapacity,
+                exceptionBuffer, exceptionBufferCapacity);
     } catch (const FatalException &e) {
         topend->crashVoltDB(e);
     }
@@ -546,6 +554,7 @@ SHAREDLIB_JNIEXPORT jint JNICALL Java_org_voltdb_jni_ExecutionEngine_nativeExecu
 (JNIEnv *env,
         jobject obj,
         jlong engine_ptr,
+        jint buffer_hint,
         jint num_fragments,
         jlongArray plan_fragment_ids,
         jlongArray input_dep_ids,
@@ -563,7 +572,7 @@ SHAREDLIB_JNIEXPORT jint JNICALL Java_org_voltdb_jni_ExecutionEngine_nativeExecu
     Topend *topend = static_cast<JNITopend*>(engine->getTopend())->updateJNIEnv(env);
     try {
         updateJNILogProxy(engine); //JNIEnv pointer can change between calls, must be updated
-        engine->resetReusedResultOutputBuffer();
+        engine->resetReusedResultOutputBuffer(0, buffer_hint);
         static_cast<JNITopend*>(engine->getTopend())->updateJNIEnv(env);
 
         // fragment info
