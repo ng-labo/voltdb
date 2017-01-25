@@ -140,7 +140,6 @@ public abstract class PBDSegment {
     abstract PBDSegmentReader getReader(String cursorId);
 
     /**
-     * @param forWrite    Open the file in read/write mode
      * @param emptyFile   true to overwrite the header with 0 entries, essentially emptying the file
      * @throws IOException
      */
