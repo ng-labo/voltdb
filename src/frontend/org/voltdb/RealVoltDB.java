@@ -2562,8 +2562,9 @@ public class RealVoltDB implements VoltDBInterface, RestoreAgent.Callback, HostM
      * site are synched to the existing cluster.
      */
     MeshProber.Determination buildClusterMesh(ReadDeploymentResults readDepl) {
+        final boolean durabilityOn = readDepl.deployment.getCommandlog().isEnabled() || readDepl.deployment.getSnapshot().isEnabled();
         final boolean bareAtStartup  = m_config.m_forceVoltdbCreate
-                || pathsWithRecoverableArtifacts(readDepl.deployment).isEmpty();
+                || (pathsWithRecoverableArtifacts(readDepl.deployment).isEmpty() && durabilityOn);
         setBare(bareAtStartup);
 
         final Supplier<Integer> hostCountSupplier = new Supplier<Integer>() {
