@@ -45,6 +45,7 @@ import java.util.Scanner;
 import java.util.Set;
 import java.util.TimeZone;
 import java.util.TreeSet;
+import java.util.logging.LogManager;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -1268,7 +1269,7 @@ public class SQLCommand
         String kerberos = "";
         List<String> queries = null;
         String ddlFile = "";
-
+        LogManager.getLogManager().reset();
         // Parse out parameters
         for (int i = 0; i < args.length; i++) {
             String arg = args[i];
