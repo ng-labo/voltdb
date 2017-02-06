@@ -628,8 +628,7 @@ public abstract class ExecutionEngine implements FastDeserializer.Deserializatio
             m_startTime = 0;
             m_logDuration = INITIAL_LOG_DURATION;
             m_sqlTexts = sqlTexts;
-            int bufferHint = Math.min(m_currentBatchIndex,1);
-            FastDeserializer results = coreExecutePlanFragments(bufferHint, numFragmentIds, planFragmentIds,
+            FastDeserializer results = coreExecutePlanFragments(m_currentBatchIndex, numFragmentIds, planFragmentIds,
                     inputDepIds, parameterSets, isWriteFrag, writeCRC, txnId, spHandle, lastCommittedSpHandle,
                     uniqueId, undoQuantumToken);
             m_plannerStats.updateEECacheStats(m_eeCacheSize, numFragmentIds - m_cacheMisses,
@@ -649,7 +648,7 @@ public abstract class ExecutionEngine implements FastDeserializer.Deserializatio
     }
 
     protected abstract FastDeserializer coreExecutePlanFragments(
-            int bufferHint,
+            int batchIndex,
             int numFragmentIds,
             long[] planFragmentIds,
             long[] inputDepIds,
@@ -906,7 +905,7 @@ public abstract class ExecutionEngine implements FastDeserializer.Deserializatio
      */
     protected native int nativeExecutePlanFragments(
             long pointer,
-            int bufferHint,
+            int batchIndex,
             int numFragments,
             long[] planFragmentIds,
             long[] inputDepIds,

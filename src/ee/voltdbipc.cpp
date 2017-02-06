@@ -194,8 +194,7 @@ private:
     void setupSigHandler(void) const;
 
     int m_fd;
-    char *m_firstReusedResultBuffer;
-    char *m_finalReusedResultBuffer;
+    char *m_reusedResultBuffer;
     char *m_exceptionBuffer;
     bool m_terminate;
 
@@ -397,8 +396,7 @@ VoltDBIPC::VoltDBIPC(int fd) : m_fd(fd) {
     currentVolt = this;
     m_engine = NULL;
     m_counter = 0;
-    m_firstReusedResultBuffer = NULL;
-    m_finalReusedResultBuffer = NULL;
+    m_reusedResultBuffer = NULL;
     m_tupleBuffer = NULL;
     m_tupleBufferSize = 0;
     m_terminate = false;
@@ -413,8 +411,7 @@ VoltDBIPC::~VoltDBIPC() {
     // throw "Conditional jump or move depends on uninitialised value(s)" error.
     if (m_engine != NULL) {
         delete m_engine;
-        delete [] m_firstReusedResultBuffer;
-        delete [] m_finalReusedResultBuffer;
+        delete [] m_reusedResultBuffer;
         delete [] m_tupleBuffer;
         delete [] m_exceptionBuffer;
     }
@@ -630,14 +627,12 @@ int8_t VoltDBIPC::initialize(struct ipc_command *cmd) {
     try {
         m_engine = new VoltDBEngine(this, new voltdb::StdoutLogProxy());
         m_engine->getLogManager()->setLogLevels(cs->logLevels);
-        m_firstReusedResultBuffer = new char[MAX_MSG_SZ];
-        std::memset(m_firstReusedResultBuffer, 0, MAX_MSG_SZ);
-        m_finalReusedResultBuffer = new char[MAX_MSG_SZ];
-        std::memset(m_finalReusedResultBuffer, 0, MAX_MSG_SZ);
+        m_reusedResultBuffer = new char[MAX_MSG_SZ];
+        std::memset(m_reusedResultBuffer, 0, MAX_MSG_SZ);
         m_exceptionBuffer = new char[MAX_MSG_SZ];
         m_engine->setBuffers(NULL, 0,
-                             m_firstReusedResultBuffer, MAX_MSG_SZ,
-                             m_finalReusedResultBuffer, MAX_MSG_SZ,
+                             NULL, 0,
+                             m_reusedResultBuffer, MAX_MSG_SZ,
                              m_exceptionBuffer, MAX_MSG_SZ);
         // The tuple buffer gets expanded (doubled) as needed, but never compacted.
         m_tupleBufferSize = MAX_MSG_SZ;
@@ -1142,42 +1137,42 @@ void VoltDBIPC::crashVoltDB(voltdb::FatalException e) {
                     filenameLength);
 
     //status code
-    m_finalReusedResultBuffer[0] = static_cast<char>(kErrorCode_CrashVoltDB);
+    m_reusedResultBuffer[0] = static_cast<char>(kErrorCode_CrashVoltDB);
     size_t position = 1;
 
     //overall message length, not included in messageLength
-    *reinterpret_cast<int32_t*>(&m_finalReusedResultBuffer[position]) = htonl(messageLength);
+    *reinterpret_cast<int32_t*>(&m_reusedResultBuffer[position]) = htonl(messageLength);
     position += sizeof(int32_t);
 
     //reason string
-    *reinterpret_cast<int32_t*>(&m_finalReusedResultBuffer[position]) = htonl(reasonLength);
+    *reinterpret_cast<int32_t*>(&m_reusedResultBuffer[position]) = htonl(reasonLength);
     position += sizeof(int32_t);
-    memcpy( &m_finalReusedResultBuffer[position], reasonBytes, reasonLength);
+    memcpy( &m_reusedResultBuffer[position], reasonBytes, reasonLength);
     position += reasonLength;
 
     //filename string
-    *reinterpret_cast<int32_t*>(&m_finalReusedResultBuffer[position]) = htonl(filenameLength);
+    *reinterpret_cast<int32_t*>(&m_reusedResultBuffer[position]) = htonl(filenameLength);
     position += sizeof(int32_t);
-    memcpy( &m_finalReusedResultBuffer[position], e.m_filename, filenameLength);
+    memcpy( &m_reusedResultBuffer[position], e.m_filename, filenameLength);
     position += filenameLength;
 
     //lineno
-    *reinterpret_cast<int32_t*>(&m_finalReusedResultBuffer[position]) = htonl(lineno);
+    *reinterpret_cast<int32_t*>(&m_reusedResultBuffer[position]) = htonl(lineno);
     position += sizeof(int32_t);
 
     //number of traces
-    *reinterpret_cast<int32_t*>(&m_finalReusedResultBuffer[position]) = htonl(numTraces);
+    *reinterpret_cast<int32_t*>(&m_reusedResultBuffer[position]) = htonl(numTraces);
     position += sizeof(int32_t);
 
     for (int ii = 0; ii < static_cast<int>(e.m_traces.size()); ii++) {
         int32_t traceLength = static_cast<int32_t>(strlen(e.m_traces[ii].c_str()));
-        *reinterpret_cast<int32_t*>(&m_finalReusedResultBuffer[position]) = htonl(traceLength);
+        *reinterpret_cast<int32_t*>(&m_reusedResultBuffer[position]) = htonl(traceLength);
         position += sizeof(int32_t);
-        memcpy( &m_finalReusedResultBuffer[position], e.m_traces[ii].c_str(), traceLength);
+        memcpy( &m_reusedResultBuffer[position], e.m_traces[ii].c_str(), traceLength);
         position += traceLength;
     }
 
-    writeOrDie(m_fd,  (unsigned char*)m_finalReusedResultBuffer, 5 + messageLength);
+    writeOrDie(m_fd,  (unsigned char*)m_reusedResultBuffer, 5 + messageLength);
     exit(-1);
 }
 
@@ -1302,7 +1297,7 @@ void VoltDBIPC::tableStreamSerializeMore(struct ipc_command *cmd) {
         ReferenceSerializeInputBE in2(inptr, sz);
         // 1 byte status and 4 byte count
         size_t offset = 5;
-        ReferenceSerializeOutput out1(m_finalReusedResultBuffer, MAX_MSG_SZ);
+        ReferenceSerializeOutput out1(m_reusedResultBuffer, MAX_MSG_SZ);
         out1.writeInt(bufferCount);
         for (size_t i = 0; i < bufferCount; i++) {
             in2.readLong(); in2.readInt(); // skip address and offset, used for jni only
@@ -1316,7 +1311,7 @@ void VoltDBIPC::tableStreamSerializeMore(struct ipc_command *cmd) {
         }
 
         // Perform table stream serialization.
-        ReferenceSerializeInputBE out2(m_finalReusedResultBuffer, MAX_MSG_SZ);
+        ReferenceSerializeInputBE out2(m_reusedResultBuffer, MAX_MSG_SZ);
         std::vector<int> positions;
         int64_t remaining = m_engine->tableStreamSerializeMore(tableId, streamType, out2, positions);
 
@@ -1495,11 +1490,11 @@ void VoltDBIPC::threadLocalPoolAllocations() {
 }
 
 int64_t VoltDBIPC::getQueuedExportBytes(int32_t partitionId, std::string signature) {
-    m_finalReusedResultBuffer[0] = kErrorCode_getQueuedExportBytes;
-    *reinterpret_cast<int32_t*>(&m_finalReusedResultBuffer[1]) = htonl(partitionId);
-    *reinterpret_cast<int32_t*>(&m_finalReusedResultBuffer[5]) = htonl(static_cast<int32_t>(signature.size()));
-    ::memcpy( &m_finalReusedResultBuffer[9], signature.c_str(), signature.size());
-    writeOrDie(m_fd, (unsigned char*)m_finalReusedResultBuffer, 9 + signature.size());
+    m_reusedResultBuffer[0] = kErrorCode_getQueuedExportBytes;
+    *reinterpret_cast<int32_t*>(&m_reusedResultBuffer[1]) = htonl(partitionId);
+    *reinterpret_cast<int32_t*>(&m_reusedResultBuffer[5]) = htonl(static_cast<int32_t>(signature.size()));
+    ::memcpy( &m_reusedResultBuffer[9], signature.c_str(), signature.size());
+    writeOrDie(m_fd, (unsigned char*)m_reusedResultBuffer, 9 + signature.size());
 
     int64_t netval;
     ssize_t bytes = read(m_fd, &netval, sizeof(int64_t));
@@ -1522,38 +1517,38 @@ void VoltDBIPC::pushExportBuffer(
         bool sync,
         bool endOfStream) {
     int32_t index = 0;
-    m_finalReusedResultBuffer[index++] = kErrorCode_pushExportBuffer;
-    *reinterpret_cast<int64_t*>(&m_finalReusedResultBuffer[index]) = htonll(exportGeneration);
+    m_reusedResultBuffer[index++] = kErrorCode_pushExportBuffer;
+    *reinterpret_cast<int64_t*>(&m_reusedResultBuffer[index]) = htonll(exportGeneration);
     index += 8;
-    *reinterpret_cast<int32_t*>(&m_finalReusedResultBuffer[index]) = htonl(partitionId);
+    *reinterpret_cast<int32_t*>(&m_reusedResultBuffer[index]) = htonl(partitionId);
     index += 4;
-    *reinterpret_cast<int32_t*>(&m_finalReusedResultBuffer[index]) = htonl(static_cast<int32_t>(signature.size()));
+    *reinterpret_cast<int32_t*>(&m_reusedResultBuffer[index]) = htonl(static_cast<int32_t>(signature.size()));
     index += 4;
-    ::memcpy( &m_finalReusedResultBuffer[index], signature.c_str(), signature.size());
+    ::memcpy( &m_reusedResultBuffer[index], signature.c_str(), signature.size());
     index += static_cast<int32_t>(signature.size());
     if (block != NULL) {
-        *reinterpret_cast<int64_t*>(&m_finalReusedResultBuffer[index]) = htonll(block->uso());
+        *reinterpret_cast<int64_t*>(&m_reusedResultBuffer[index]) = htonll(block->uso());
     } else {
-        *reinterpret_cast<int64_t*>(&m_finalReusedResultBuffer[index]) = 0;
+        *reinterpret_cast<int64_t*>(&m_reusedResultBuffer[index]) = 0;
     }
     index += 8;
-    *reinterpret_cast<int8_t*>(&m_finalReusedResultBuffer[index++]) =
+    *reinterpret_cast<int8_t*>(&m_reusedResultBuffer[index++]) =
         sync ?
             static_cast<int8_t>(1) : static_cast<int8_t>(0);
-    *reinterpret_cast<int8_t*>(&m_finalReusedResultBuffer[index++]) =
+    *reinterpret_cast<int8_t*>(&m_reusedResultBuffer[index++]) =
         endOfStream ?
             static_cast<int8_t>(1) : static_cast<int8_t>(0);
     if (block != NULL) {
-        *reinterpret_cast<int32_t*>(&m_finalReusedResultBuffer[index]) = htonl(block->rawLength());
-        writeOrDie(m_fd, (unsigned char*)m_finalReusedResultBuffer, index + 4);
+        *reinterpret_cast<int32_t*>(&m_reusedResultBuffer[index]) = htonl(block->rawLength());
+        writeOrDie(m_fd, (unsigned char*)m_reusedResultBuffer, index + 4);
         // Memset the first 8 bytes to initialize the MAGIC_HEADER_SPACE_FOR_JAVA
         ::memset(block->rawPtr(), 0, 8);
         writeOrDie(m_fd, (unsigned char*)block->rawPtr(), block->rawLength());
         // Need the delete in the if statement for valgrind
         delete [] block->rawPtr();
     } else {
-        *reinterpret_cast<int32_t*>(&m_finalReusedResultBuffer[index]) = htonl(0);
-        writeOrDie(m_fd, (unsigned char*)m_finalReusedResultBuffer, index + 4);
+        *reinterpret_cast<int32_t*>(&m_reusedResultBuffer[index]) = htonl(0);
+        writeOrDie(m_fd, (unsigned char*)m_reusedResultBuffer, index + 4);
     }
 }
 

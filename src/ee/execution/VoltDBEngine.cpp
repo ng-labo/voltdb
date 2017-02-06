@@ -1415,7 +1415,7 @@ int VoltDBEngine::getResultsSize() const {
 
 void VoltDBEngine::setBuffers(char *parameterBuffer, int parameterBufferCapacity,
         char *firstResultBuffer, int firstResultBufferCapacity,
-        char *finalResultBuffer, int finalResultBufferCapacity,
+        char *nextResultBuffer, int nextResultBufferCapacity,
         char *exceptionBuffer, int exceptionBufferCapacity) {
     m_parameterBuffer = parameterBuffer;
     m_parameterBufferCapacity = parameterBufferCapacity;
@@ -1423,8 +1423,8 @@ void VoltDBEngine::setBuffers(char *parameterBuffer, int parameterBufferCapacity
     m_firstReusedResultBuffer = firstResultBuffer;
     m_firstReusedResultCapacity = firstResultBufferCapacity;
 
-    m_finalReusedResultBuffer = finalResultBuffer;
-    m_finalReusedResultCapacity = finalResultBufferCapacity;
+    m_nextReusedResultBuffer = nextResultBuffer;
+    m_nextReusedResultCapacity = nextResultBufferCapacity;
 
     m_exceptionBuffer = exceptionBuffer;
     m_exceptionBufferCapacity = exceptionBufferCapacity;
